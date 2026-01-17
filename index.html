@@ -1,0 +1,436 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Caixa Tesouraria da Igreja</title>
+    <!-- jsPDF e AutoTable -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f4f4; padding: 20px; margin: 0; }
+        h1, h2 { text-align: center; color: #333; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background-color: #e0e0e0; }
+        .entrada { background-color: #d4edda; }
+        .saida   { background-color: #f8d7da; }
+        #resumo { background-color: #e2e3e5; padding: 15px; border: 1px solid #ccc; margin: 25px 0; border-radius: 8px; }
+        button { background-color: #007bff; color: white; border: none; padding: 8px 12px; cursor: pointer; margin: 4px; border-radius: 4px; font-size: 0.9em; }
+        button:hover { opacity: 0.9; }
+        button.apagar   { background-color: #dc3545; }
+        button.apagar-item { background-color: #dc3545; font-size: 0.85em; padding: 6px 10px; }
+        button.imprimir { background-color: #28a745; }
+        button.csv      { background-color: #6f42c1; }
+        input, select { padding: 8px; margin: 6px 0; width: 220px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+        form { text-align: center; margin-bottom: 30px; }
+        #grafico-container { max-width: 500px; margin: 20px auto; }
+    </style>
+</head>
+<body>
+
+    <h1>Sistema de Caixa Tesouraria da Igreja</h1>
+    <p style="text-align:center; color:#555;">"Administre com fidelidade os recursos do Reino, pois o Senhor examina os corações" (Provérbios 21:2).</p>
+
+    <!-- DINHEIRO (CAIXA) -->
+    <h2>Dinheiro (Caixa)</h2>
+    <table id="tabelaDinheiro">
+        <thead>
+            <tr>
+                <th>Data</th>
+                <th>Descrição</th>
+                <th>Categoria</th>
+                <th>Entrada</th>
+                <th>Saída</th>
+                <th>Saldo</th>
+                <th>Ações</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <form id="formDinheiro">
+        <input type="date" id="dataDinheiro" required>
+        <input type="text" id="descDinheiro" placeholder="Descrição" required>
+        <select id="categoriaDinheiro" required>
+            <option value="" disabled selected>Categoria</option>
+            <option value="Dízimos">Dízimos</option>
+            <option value="Ofertas">Ofertas</option>
+            <option value="Despesas">Despesas</option>
+            <option value="Outros">Outros</option>
+        </select>
+        <input type="text" id="valorDinheiro" placeholder="Ex: 1.234,56" required>
+        <select id="tipoDinheiro">
+            <option value="entrada">Entrada</option>
+            <option value="saida">Saída</option>
+        </select>
+        <button type="button" onclick="adicionarTransacao('dinheiro')">Adicionar</button>
+    </form>
+
+    <!-- PIX (BANCO) -->
+    <h2>Pix / Conta Bancária</h2>
+    <table id="tabelaPix">
+        <thead>
+            <tr>
+                <th>Data</th>
+                <th>Descrição</th>
+                <th>Categoria</th>
+                <th>Entrada</th>
+                <th>Saída</th>
+                <th>Saldo</th>
+                <th>Ações</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <form id="formPix">
+        <input type="date" id="dataPix" required>
+        <input type="text" id="descPix" placeholder="Descrição" required>
+        <select id="categoriaPix" required>
+            <option value="" disabled selected>Categoria</option>
+            <option value="Dízimos">Dízimos</option>
+            <option value="Ofertas">Ofertas</option>
+            <option value="Despesas">Despesas</option>
+            <option value="Outros">Outros</option>
+        </select>
+        <input type="text" id="valorPix" placeholder="Ex: 1.234,56" required>
+        <select id="tipoPix">
+            <option value="entrada">Entrada</option>
+            <option value="saida">Saída</option>
+        </select>
+        <button type="button" onclick="adicionarTransacao('pix')">Adicionar</button>
+    </form>
+
+    <!-- BOTÕES DE AÇÃO -->
+    <div style="text-align:center; margin:30px 0;">
+        <button class="apagar" onclick="apagarTudo()">Apagar Tudo</button>
+        <button class="imprimir" onclick="gerarPDF()">Gerar PDF</button>
+        <button class="csv" onclick="exportarCSV()">Exportar CSV</button>
+    </div>
+
+    <!-- RESUMO + GRÁFICO -->
+    <div id="resumo">
+        <h2>Resumo Geral</h2>
+        <p id="saldoDinheiro">Saldo Dinheiro/Caixa: R$ 0,00</p>
+        <p id="saldoPix">Saldo Pix/Banco: R$ 0,00</p>
+        <div id="grafico-container">
+            <canvas id="graficoSaldos"></canvas>
+        </div>
+    </div>
+
+    <script>
+        let saldoDinheiro = 0;
+        let saldoPix = 0;
+        let chart;
+
+        // Converter valor brasileiro para número (1.234,56 → 1234.56)
+        function parseValorBR(str) {
+            if (!str) return NaN;
+            const limpo = str.replace(/\./g, '').replace(',', '.').trim();
+            const num = parseFloat(limpo);
+            return isNaN(num) ? NaN : num;
+        }
+
+        // Formatar número para exibição brasileira (1234.56 → "1.234,56")
+        function formatarBR(num) {
+            if (isNaN(num)) return "0,00";
+            return num.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+        }
+
+        // PERSISTÊNCIA
+        function salvarDados() {
+            localStorage.setItem('transacoesDinheiro', document.querySelector('#tabelaDinheiro tbody').innerHTML);
+            localStorage.setItem('transacoesPix', document.querySelector('#tabelaPix tbody').innerHTML);
+            localStorage.setItem('saldoDinheiro', saldoDinheiro);
+            localStorage.setItem('saldoPix', saldoPix);
+        }
+
+        function carregarDados() {
+            const htmlDinheiro = localStorage.getItem('transacoesDinheiro');
+            const htmlPix = localStorage.getItem('transacoesPix');
+            if (htmlDinheiro) document.querySelector('#tabelaDinheiro tbody').innerHTML = htmlDinheiro;
+            if (htmlPix) document.querySelector('#tabelaPix tbody').innerHTML = htmlPix;
+
+            saldoDinheiro = parseFloat(localStorage.getItem('saldoDinheiro')) || 0;
+            saldoPix = parseFloat(localStorage.getItem('saldoPix')) || 0;
+
+            // Reconstruir botões Apagar
+            document.querySelectorAll('#tabelaDinheiro tbody tr, #tabelaPix tbody tr').forEach(row => {
+                if (!row.querySelector('button.apagar-item')) {
+                    const tdAcoes = row.cells[6] || row.insertCell(6);
+                    tdAcoes.innerHTML = '';
+                    const btn = document.createElement('button');
+                    btn.className = 'apagar-item';
+                    btn.textContent = 'Apagar';
+                    btn.onclick = () => apagarTransacao(row);
+                    tdAcoes.appendChild(btn);
+                }
+            });
+
+            atualizarResumo();
+        }
+
+        // ADICIONAR TRANSAÇÃO
+        function adicionarTransacao(tipo) {
+            const isDinheiro = tipo === 'dinheiro';
+            const prefix = isDinheiro ? 'Dinheiro' : 'Pix';
+
+            const data = document.getElementById(`data${prefix}`).value;
+            const desc = document.getElementById(`desc${prefix}`).value.trim();
+            const cat = document.getElementById(`categoria${prefix}`).value;
+            const valorStr = document.getElementById(`valor${prefix}`).value.trim();
+            const tipoMov = document.getElementById(`tipo${prefix}`).value;
+
+            const valor = parseValorBR(valorStr);
+
+            if (!data || !desc || !cat || isNaN(valor) || valor <= 0) {
+                alert('Preencha todos os campos corretamente.\nUse formato brasileiro: 1.234,56 ou 1234,56');
+                return;
+            }
+
+            // Atualizar saldo
+            if (tipoMov === 'entrada') {
+                isDinheiro ? saldoDinheiro += valor : saldoPix += valor;
+            } else {
+                isDinheiro ? saldoDinheiro -= valor : saldoPix -= valor;
+            }
+
+            const saldoAtual = (isDinheiro ? saldoDinheiro : saldoPix).toFixed(2);
+            const entradaTxt = tipoMov === 'entrada' ? formatarBR(valor) : '';
+            const saidaTxt = tipoMov === 'saida' ? formatarBR(valor) : '';
+            const classe = tipoMov === 'entrada' ? 'entrada' : 'saida';
+
+            // Adicionar linha na tabela
+            const tbody = document.querySelector(`#tabela${prefix} tbody`);
+            const novaRow = tbody.insertRow();
+            novaRow.className = classe;
+            novaRow.innerHTML = `
+                <td>${data}</td>
+                <td>${desc}</td>
+                <td>${cat}</td>
+                <td>${entradaTxt}</td>
+                <td>${saidaTxt}</td>
+                <td>R$ ${formatarBR(parseFloat(saldoAtual))}</td>
+                <td><button class="apagar-item" onclick="apagarTransacao(this.closest('tr'))">Apagar</button></td>
+            `;
+
+            atualizarResumo();
+            salvarDados();
+
+            // Limpar formulário
+            document.getElementById(`data${prefix}`).value = '';
+            document.getElementById(`desc${prefix}`).value = '';
+            document.getElementById(`valor${prefix}`).value = '';
+            document.getElementById(`categoria${prefix}`).value = '';
+        }
+
+        // APAGAR UMA TRANSAÇÃO
+        function apagarTransacao(row) {
+            if (!confirm('Tem certeza que deseja apagar esta transação?')) return;
+
+            const tabela = row.closest('table');
+            const isDinheiro = tabela.id === 'tabelaDinheiro';
+            const cells = row.cells;
+
+            // Pegar valor da entrada ou saída
+            const valorEntrada = parseValorBR(cells[3].textContent) || 0;
+            const valorSaida = parseValorBR(cells[4].textContent) || 0;
+
+            // Reverter o saldo
+            if (valorEntrada > 0) {
+                isDinheiro ? saldoDinheiro -= valorEntrada : saldoPix -= valorEntrada;
+            } else if (valorSaida > 0) {
+                isDinheiro ? saldoDinheiro += valorSaida : saldoPix += valorSaida;
+            }
+
+            // Remover linha
+            row.remove();
+
+            // Recalcular todos os saldos da tabela
+            recalcularSaldos(isDinheiro);
+
+            atualizarResumo();
+            salvarDados();
+        }
+
+        // RECALCULAR SALDOS APÓS EXCLUSÃO
+        function recalcularSaldos(isDinheiro) {
+            const tabela = isDinheiro ? '#tabelaDinheiro' : '#tabelaPix';
+            let saldoTemp = 0;
+
+            document.querySelectorAll(`${tabela} tbody tr`).forEach(row => {
+                const cells = row.cells;
+                const valorEntrada = parseValorBR(cells[3].textContent) || 0;
+                const valorSaida = parseValorBR(cells[4].textContent) || 0;
+
+                if (valorEntrada > 0) {
+                    saldoTemp += valorEntrada;
+                } else if (valorSaida > 0) {
+                    saldoTemp -= valorSaida;
+                }
+
+                // Atualizar célula de saldo
+                cells[5].textContent = `R$ ${formatarBR(saldoTemp)}`;
+            });
+
+            // Atualizar saldo global
+            if (isDinheiro) {
+                saldoDinheiro = saldoTemp;
+            } else {
+                saldoPix = saldoTemp;
+            }
+        }
+
+        function atualizarResumo() {
+            document.getElementById('saldoDinheiro').textContent = `Saldo Dinheiro/Caixa: R$ ${formatarBR(saldoDinheiro)}`;
+            document.getElementById('saldoPix').textContent = `Saldo Pix/Banco: R$ ${formatarBR(saldoPix)}`;
+
+            const ctx = document.getElementById('graficoSaldos').getContext('2d');
+            if (chart) chart.destroy();
+            chart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Dinheiro / Caixa', 'Pix / Banco'],
+                    datasets: [{
+                        label: 'Saldo Atual',
+                        data: [saldoDinheiro, saldoPix],
+                        backgroundColor: ['#28a74588', '#007bff88'],
+                        borderColor: ['#28a745', '#007bff'],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    scales: { y: { beginAtZero: true } },
+                    plugins: { legend: { display: false } }
+                }
+            });
+        }
+
+        // APAGAR TUDO
+        function apagarTudo() {
+            if (!confirm('Tem certeza que deseja apagar TODAS as transações e zerar os saldos?\nEssa ação não pode ser desfeita.')) return;
+
+            saldoDinheiro = 0;
+            saldoPix = 0;
+
+            document.querySelector('#tabelaDinheiro tbody').innerHTML = '';
+            document.querySelector('#tabelaPix tbody').innerHTML = '';
+
+            atualizarResumo();
+            salvarDados();
+
+            alert('Tudo apagado com sucesso. Os saldos foram zerados.');
+        }
+
+        // GERAR PDF
+        function gerarPDF() {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+
+            doc.setFontSize(16);
+            doc.text('Relatório de Tesouraria da Igreja', 105, 15, { align: 'center' });
+            doc.setFontSize(10);
+            doc.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, 105, 22, { align: 'center' });
+
+            // DINHEIRO
+            doc.setFontSize(14);
+            doc.text('Dinheiro / Caixa', 14, 35);
+
+            const dadosDinheiro = [];
+            document.querySelectorAll('#tabelaDinheiro tbody tr').forEach(row => {
+                const cells = row.cells;
+                dadosDinheiro.push([
+                    cells[0].textContent,
+                    cells[1].textContent,
+                    cells[2].textContent,
+                    cells[3].textContent || '-',
+                    cells[4].textContent || '-',
+                    cells[5].textContent
+                ]);
+            });
+
+            if (dadosDinheiro.length > 0) {
+                doc.autoTable({
+                    head: [['Data', 'Descrição', 'Categoria', 'Entrada', 'Saída', 'Saldo']],
+                    body: dadosDinheiro,
+                    startY: 40,
+                    theme: 'grid',
+                    headStyles: { fillColor: [224, 224, 224], textColor: [0, 0, 0] },
+                    styles: { fontSize: 9 }
+                });
+            }
+
+            // PIX
+            const finalY1 = doc.lastAutoTable ? doc.lastAutoTable.finalY + 10 : 50;
+            doc.setFontSize(14);
+            doc.text('Pix / Conta Bancária', 14, finalY1);
+
+            const dadosPix = [];
+            document.querySelectorAll('#tabelaPix tbody tr').forEach(row => {
+                const cells = row.cells;
+                dadosPix.push([
+                    cells[0].textContent,
+                    cells[1].textContent,
+                    cells[2].textContent,
+                    cells[3].textContent || '-',
+                    cells[4].textContent || '-',
+                    cells[5].textContent
+                ]);
+            });
+
+            if (dadosPix.length > 0) {
+                doc.autoTable({
+                    head: [['Data', 'Descrição', 'Categoria', 'Entrada', 'Saída', 'Saldo']],
+                    body: dadosPix,
+                    startY: finalY1 + 5,
+                    theme: 'grid',
+                    headStyles: { fillColor: [224, 224, 224], textColor: [0, 0, 0] },
+                    styles: { fontSize: 9 }
+                });
+            }
+
+            // Resumo
+            const finalY2 = doc.lastAutoTable ? doc.lastAutoTable.finalY + 10 : finalY1 + 15;
+            doc.setFontSize(12);
+            doc.text('Resumo Geral', 14, finalY2);
+            doc.setFontSize(10);
+            doc.text(`Saldo Dinheiro/Caixa: R$ ${formatarBR(saldoDinheiro)}`, 14, finalY2 + 7);
+            doc.text(`Saldo Pix/Banco: R$ ${formatarBR(saldoPix)}`, 14, finalY2 + 14);
+            doc.text(`Total Geral: R$ ${formatarBR(saldoDinheiro + saldoPix)}`, 14, finalY2 + 21);
+
+            doc.save('relatorio_tesouraria.pdf');
+        }
+
+        // EXPORTAR CSV
+        function exportarCSV() {
+            let csv = 'Tipo,Data,Descrição,Categoria,Entrada,Saída,Saldo\n';
+
+            document.querySelectorAll('#tabelaDinheiro tbody tr').forEach(row => {
+                const cells = row.cells;
+                csv += `Dinheiro,${cells[0].textContent},${cells[1].textContent},${cells[2].textContent},`;
+                csv += `${cells[3].textContent || '0'},${cells[4].textContent || '0'},${cells[5].textContent}\n`;
+            });
+
+            document.querySelectorAll('#tabelaPix tbody tr').forEach(row => {
+                const cells = row.cells;
+                csv += `Pix,${cells[0].textContent},${cells[1].textContent},${cells[2].textContent},`;
+                csv += `${cells[3].textContent || '0'},${cells[4].textContent || '0'},${cells[5].textContent}\n`;
+            });
+
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'tesouraria.csv';
+            link.click();
+        }
+
+        // Inicialização
+        carregarDados();
+    </script>
+</body>
+</html>
